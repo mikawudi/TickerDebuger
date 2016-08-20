@@ -1,0 +1,70 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2013
+VisualStudioVersion = 12.0.40629.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TickerDebuger", "TickerDebuger\TickerDebuger.vcxproj", "{DE1F5BFA-75DA-43E7-8B2F-3DE7D5FC82C8}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "TickerServer", "TickerServer", "{A9786A83-DE00-4DC3-BFAF-8F159BCB8D23}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TickerServer.Shared", "TickerServer\TickerServer.Shared\TickerServer.Shared.vcxitems", "{6CB3A0F3-DA70-4604-80F8-4EADE993DDDC}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TickerServer.Windows", "TickerServer\TickerServer.Windows\TickerServer.Windows.vcxproj", "{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TickerServer.WindowsPhone", "TickerServer\TickerServer.WindowsPhone\TickerServer.WindowsPhone.vcxproj", "{20B23042-0956-4858-8182-2F1C1A5A77AB}"
+EndProject
+Global
+	GlobalSection(SharedMSBuildProjectFiles) = preSolution
+		TickerServer\TickerServer.Shared\TickerServer.Shared.vcxitems*{6cb3a0f3-da70-4604-80f8-4eade993dddc}*SharedItemsImports = 9
+		TickerServer\TickerServer.Shared\TickerServer.Shared.vcxitems*{20b23042-0956-4858-8182-2f1c1a5a77ab}*SharedItemsImports = 4
+		TickerServer\TickerServer.Shared\TickerServer.Shared.vcxitems*{b2f4b48c-0012-4f22-b3eb-9ad4b7c4af55}*SharedItemsImports = 4
+	EndGlobalSection
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|ARM = Debug|ARM
+		Debug|Win32 = Debug|Win32
+		Debug|x64 = Debug|x64
+		Release|ARM = Release|ARM
+		Release|Win32 = Release|Win32
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DE1F5BFA-75DA-43E7-8B2F-3DE7D5FC82C8}.Debug|ARM.ActiveCfg = Debug|Win32
+		{DE1F5BFA-75DA-43E7-8B2F-3DE7D5FC82C8}.Debug|Win32.ActiveCfg = Debug|Win32
+		{DE1F5BFA-75DA-43E7-8B2F-3DE7D5FC82C8}.Debug|Win32.Build.0 = Debug|Win32
+		{DE1F5BFA-75DA-43E7-8B2F-3DE7D5FC82C8}.Debug|x64.ActiveCfg = Debug|Win32
+		{DE1F5BFA-75DA-43E7-8B2F-3DE7D5FC82C8}.Release|ARM.ActiveCfg = Release|Win32
+		{DE1F5BFA-75DA-43E7-8B2F-3DE7D5FC82C8}.Release|Win32.ActiveCfg = Release|Win32
+		{DE1F5BFA-75DA-43E7-8B2F-3DE7D5FC82C8}.Release|Win32.Build.0 = Release|Win32
+		{DE1F5BFA-75DA-43E7-8B2F-3DE7D5FC82C8}.Release|x64.ActiveCfg = Release|Win32
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}.Debug|ARM.ActiveCfg = Debug|ARM
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}.Debug|ARM.Build.0 = Debug|ARM
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}.Debug|Win32.ActiveCfg = Debug|Win32
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}.Debug|Win32.Build.0 = Debug|Win32
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}.Debug|x64.ActiveCfg = Debug|x64
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}.Debug|x64.Build.0 = Debug|x64
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}.Release|ARM.ActiveCfg = Release|ARM
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}.Release|ARM.Build.0 = Release|ARM
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}.Release|Win32.ActiveCfg = Release|Win32
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}.Release|Win32.Build.0 = Release|Win32
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}.Release|x64.ActiveCfg = Release|x64
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55}.Release|x64.Build.0 = Release|x64
+		{20B23042-0956-4858-8182-2F1C1A5A77AB}.Debug|ARM.ActiveCfg = Debug|ARM
+		{20B23042-0956-4858-8182-2F1C1A5A77AB}.Debug|ARM.Build.0 = Debug|ARM
+		{20B23042-0956-4858-8182-2F1C1A5A77AB}.Debug|Win32.ActiveCfg = Debug|Win32
+		{20B23042-0956-4858-8182-2F1C1A5A77AB}.Debug|Win32.Build.0 = Debug|Win32
+		{20B23042-0956-4858-8182-2F1C1A5A77AB}.Debug|x64.ActiveCfg = Debug|Win32
+		{20B23042-0956-4858-8182-2F1C1A5A77AB}.Release|ARM.ActiveCfg = Release|ARM
+		{20B23042-0956-4858-8182-2F1C1A5A77AB}.Release|ARM.Build.0 = Release|ARM
+		{20B23042-0956-4858-8182-2F1C1A5A77AB}.Release|Win32.ActiveCfg = Release|Win32
+		{20B23042-0956-4858-8182-2F1C1A5A77AB}.Release|Win32.Build.0 = Release|Win32
+		{20B23042-0956-4858-8182-2F1C1A5A77AB}.Release|x64.ActiveCfg = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{6CB3A0F3-DA70-4604-80F8-4EADE993DDDC} = {A9786A83-DE00-4DC3-BFAF-8F159BCB8D23}
+		{B2F4B48C-0012-4F22-B3EB-9AD4B7C4AF55} = {A9786A83-DE00-4DC3-BFAF-8F159BCB8D23}
+		{20B23042-0956-4858-8182-2F1C1A5A77AB} = {A9786A83-DE00-4DC3-BFAF-8F159BCB8D23}
+	EndGlobalSection
+EndGlobal
