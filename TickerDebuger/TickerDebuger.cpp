@@ -135,11 +135,11 @@ public:
 	SOCKET _socket;
 protected:
 	queue<OperatorObject*>* _sendQueue;
-	list<char*>* _recvData;
 	mutex* _sendMutex;
 	bool _isClose;
 	int _waitEndSend;
 	int _waitEndRecv;
+	list<DataPack*>* _recvData;
 private:
 	BaseProtoctl* _protoctlCehcker;
 public:
@@ -151,7 +151,7 @@ public:
 	{
 		_sendQueue = new queue<OperatorObject*>();
 		this->_sendMutex = new mutex();
-		this->_recvData = new list<char*>();
+		this->_recvData = new list<DataPack*>();
 		this->_protoctlCehcker = new MyProtoctl();
 	}
 	void StartRecv();
@@ -198,7 +198,7 @@ void Client::EndRecv(OperatorObject* recvObj, DWORD opCount)
 		return;
 	}
 	//op
-
+	auto result = this->_protoctlCehcker->GetData(_recvData);
 
 	recvObj->ReSet();
 	this->StartRecv(recvObj);
