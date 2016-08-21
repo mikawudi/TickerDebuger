@@ -23,27 +23,41 @@ public:
 	int count;
 	char* data;
 };
-class BaseProtoctl
+class BaseProtocol
 {
 protected:
-	BaseProtoctl(){};
-public:
+	BaseProtocol(){};
+protected:
 	virtual DataResult GetData(const list<DataPack>* data) = 0;
+	virtual void DeleteData(list<DataPack>* data, int count) = 0;
+public:
+	DataResult CheckData(list<DataPack>* data);
 };
 
-class MyProtoctl
-	: public BaseProtoctl
+DataResult BaseProtocol::CheckData(list<DataPack>* data)
+{
+	DataResult result = this->GetData(data);
+	if (result.count > 0)
+		this->DeleteData(data, result.count);
+	return result;
+}
+
+class MyProtocol
+	: public BaseProtocol
 {
 public:
-	MyProtoctl() 
-		:BaseProtoctl()
+	MyProtocol() 
+		:BaseProtocol()
 	{
 
 	}
+protected:
 	DataResult GetData(const list<DataPack>* data) override;
+	void DeleteData(list<DataPack>* data, int count) override;
+
 };
 
-DataResult MyProtoctl::GetData(const list<DataPack>* data)
+DataResult MyProtocol::GetData(const list<DataPack>* data)
 {
 	if (data->size() == 0)
 		return DataResult(0, nullptr);
@@ -76,6 +90,39 @@ DataResult MyProtoctl::GetData(const list<DataPack>* data)
 			break;
 	}
 	return DataResult(length, dataresult);
+}
+
+void MyProtocol::DeleteData(list<DataPack>* data, int count)
+{
+	int index = 0;
+	int removeCount = 0;
+	for (auto start : *data)
+	{
+		int temp = index + start.length;
+		if (temp <= count)
+		{
+			removeCount++;
+			delete start.data;
+			index = temp;
+			if (temp == count)
+				break;
+		}
+		else
+		{
+			int live = temp - count;
+			char* newTemp = (char*)malloc(live);
+			memcpy(newTemp, start.data + (start.length - live), live);
+			delete start.data;
+			start.data = newTemp;
+			start.length = live;
+			index = count;
+			break;
+		}
+	}
+	for (int i = 0; i < removeCount; i++)
+	{
+		data->pop_front();
+	}
 }
 
 class OperatorObject
@@ -141,7 +188,7 @@ protected:
 	int _waitEndRecv;
 	list<DataPack>* _recvData;
 private:
-	BaseProtoctl* _protoctlCehcker;
+	BaseProtocol* _protocolCehcker;
 public:
 	Client(SOCKET socket)
 		: _socket(socket)
@@ -152,7 +199,7 @@ public:
 		_sendQueue = new queue<OperatorObject*>();
 		this->_sendMutex = new mutex();
 		this->_recvData = new list<DataPack>();
-		this->_protoctlCehcker = new MyProtoctl();
+		this->_protocolCehcker = new MyProtocol();
 	}
 	void StartRecv();
 	void StartRecv(OperatorObject* operatorObj);
@@ -202,7 +249,7 @@ void Client::EndRecv(OperatorObject* recvObj, DWORD opCount)
 	pack.data = (char*)recvObj->_recvDataBuff;
 	pack.length = recvObj->_recvCount;
 	this->_recvData->push_back(pack);
-	auto result = this->_protoctlCehcker->GetData(this->_recvData);
+	auto result = this->_protocolCehcker->CheckData(this->_recvData);
 	if (result.count > 0)
 	{
 
