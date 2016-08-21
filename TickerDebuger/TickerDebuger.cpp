@@ -11,6 +11,8 @@
 
 using namespace std;
 enum OP_TYPE{ Read = 1, Write = 2 };
+
+
 struct DataPack
 {
 	char* data;
@@ -28,13 +30,13 @@ class BaseProtocol
 protected:
 	BaseProtocol(){};
 protected:
-	virtual DataResult GetData(const list<DataPack>* data) = 0;
-	virtual void DeleteData(list<DataPack>* data, int count) = 0;
+	virtual DataResult GetData(const list<DataPack*>* data) = 0;
+	virtual void DeleteData(list<DataPack*>* data, int count) = 0;
 public:
-	DataResult CheckData(list<DataPack>* data);
+	DataResult CheckData(list<DataPack*>* data);
 };
 
-DataResult BaseProtocol::CheckData(list<DataPack>* data)
+DataResult BaseProtocol::CheckData(list<DataPack*>* data)
 {
 	DataResult result = this->GetData(data);
 	if (result.count > 0)
@@ -52,21 +54,21 @@ public:
 
 	}
 protected:
-	DataResult GetData(const list<DataPack>* data) override;
-	void DeleteData(list<DataPack>* data, int count) override;
+	DataResult GetData(const list<DataPack*>* data) override;
+	void DeleteData(list<DataPack*>* data, int count) override;
 
 };
 
-DataResult MyProtocol::GetData(const list<DataPack>* data)
+DataResult MyProtocol::GetData(const list<DataPack*>* data)
 {
 	if (data->size() == 0)
 		return DataResult(0, nullptr);
-	list<DataPack>::const_iterator start = data->begin();
-	byte length = start->data[0];
+	list<DataPack*>::const_iterator start = data->begin();
+	byte length = (*start)->data[0];
 	int dataCount = 0;
 	while (start != data->end())
 	{
-		dataCount += start->length;
+		dataCount += (*start)->length;
 		++start;
 	}
 	if (dataCount < length)
@@ -75,34 +77,34 @@ DataResult MyProtocol::GetData(const list<DataPack>* data)
 	dataCount = 0;
 	for (auto startD = data->begin(); startD != data->end(); ++startD)
 	{
-		int t = dataCount + startD->length;
+		int t = dataCount + (*startD)->length;
 		bool isOk = false;
-		int copyLeng = startD->length;
+		int copyLeng = (*startD)->length;
 		if (t >= length)
 		{
 			if (t > length)
-				copyLeng = startD->length - (t - length);
+				copyLeng = (*startD)->length - (t - length);
 			isOk = true;
 		}
 		dataCount += dataCount;
-		memcpy(dataresult + dataCount, startD->data, copyLeng);
+		memcpy(dataresult + dataCount, (*startD)->data, copyLeng);
 		if (isOk)
 			break;
 	}
 	return DataResult(length, dataresult);
 }
 
-void MyProtocol::DeleteData(list<DataPack>* data, int count)
+void MyProtocol::DeleteData(list<DataPack*>* data, int count)
 {
 	int index = 0;
 	int removeCount = 0;
 	for (auto start : *data)
 	{
-		int temp = index + start.length;
+		int temp = index + (*start).length;
 		if (temp <= count)
 		{
 			removeCount++;
-			delete start.data;
+			delete (*start).data;
 			index = temp;
 			if (temp == count)
 				break;
@@ -111,16 +113,17 @@ void MyProtocol::DeleteData(list<DataPack>* data, int count)
 		{
 			int live = temp - count;
 			char* newTemp = (char*)malloc(live);
-			memcpy(newTemp, start.data + (start.length - live), live);
-			delete start.data;
-			start.data = newTemp;
-			start.length = live;
+			memcpy(newTemp, (*start).data + ((*start).length - live), live);
+			delete (*start).data;
+			(*start).data = newTemp;
+			(*start).length = live;
 			index = count;
 			break;
 		}
 	}
 	for (int i = 0; i < removeCount; i++)
 	{
+		delete data->front();
 		data->pop_front();
 	}
 }
@@ -172,10 +175,17 @@ void OperatorObject::InitWrite()
 }
 void OperatorObject::ReSet()
 {
+	this->_recvCount = 0;
+	this->_recvDataBuff = new byte[OperatorObject::RecvCount];
+	this->_recvWSABUF.buf = (char*)this->_recvDataBuff;
+	this->_recvWSABUF.len = OperatorObject::RecvCount;
+}
+void OperatorObject::ReSetSend(char* newData, int length)
+{
 
 }
-void OperatorObject::ReSetSend(char* newData, int length){}
 //PreIO object
+
 class Client
 {
 public:
@@ -186,7 +196,7 @@ protected:
 	bool _isClose;
 	int _waitEndSend;
 	int _waitEndRecv;
-	list<DataPack>* _recvData;
+	list<DataPack*>* _recvData;
 private:
 	BaseProtocol* _protocolCehcker;
 public:
@@ -198,7 +208,7 @@ public:
 	{
 		_sendQueue = new queue<OperatorObject*>();
 		this->_sendMutex = new mutex();
-		this->_recvData = new list<DataPack>();
+		this->_recvData = new list<DataPack*>();
 		this->_protocolCehcker = new MyProtocol();
 	}
 	void StartRecv();
@@ -214,6 +224,31 @@ public:
 	}
 private:
 	void CloseClient();
+};
+
+struct RequestPack
+{
+	Client* _client;
+	char* _data;
+	int _count;
+};
+class ClientProcess
+{
+public:
+	static ClientProcess* GetInstance();
+	static const int ProcessCount;
+	static const int MaxSemaphore;
+	void AddData(Client* client, char* data, int count);
+private:
+	static ClientProcess* _instance;
+	static mutex CreateMutext;
+	static mutex AddMutext;
+	vector<thread*>* _threadVector;
+	ClientProcess();
+	void ProcessThread();
+protected:
+	queue<RequestPack>* _dataQueue;
+	HANDLE _semaphore;
 };
 
 void Client::StartRecv()
@@ -245,14 +280,14 @@ void Client::EndRecv(OperatorObject* recvObj, DWORD opCount)
 		return;
 	}
 	//op
-	DataPack pack;
-	pack.data = (char*)recvObj->_recvDataBuff;
-	pack.length = recvObj->_recvCount;
+	DataPack* pack = new DataPack();
+	pack->data = (char*)recvObj->_recvDataBuff;
+	pack->length = opCount;
 	this->_recvData->push_back(pack);
 	auto result = this->_protocolCehcker->CheckData(this->_recvData);
-	if (result.count > 0)
+	while (result.count > 0)
 	{
-
+		ClientProcess::GetInstance()->AddData(this, result.data, result.count);
 	}
 
 
@@ -274,11 +309,11 @@ void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
 	if (frontData != sendObj)
 		success = false;
 	int Flag = 0;
-	if (frontData->_sendWSABUF.len != sendObj->_sendCount)
+	if (frontData->_sendWSABUF.len != opCount)
 	{
-		int reSendCount = frontData->_sendWSABUF.len - sendObj->_sendCount;
+		int reSendCount = frontData->_sendWSABUF.len - opCount;
 		char* newData = (char*)malloc(reSendCount);
-		memcpy((void*)newData, (frontData->_sendWSABUF.buf + sendObj->_sendCount), reSendCount);
+		memcpy((void*)newData, (frontData->_sendWSABUF.buf + opCount), reSendCount);
 		frontData->ReSetSend(newData, reSendCount);
 		WSASend(this->_socket, &frontData->_sendWSABUF, 1, (LPDWORD)&frontData->_sendCount, Flag, &frontData->_overlapped, nullptr);
 	}
@@ -315,6 +350,53 @@ void Client::CloseClient()
 {
 	if (this->_isClose && this->_waitEndRecv == 0 && this->_waitEndSend == 0)
 		delete this;
+}
+
+
+ClientProcess* ClientProcess::_instance = nullptr;
+mutex ClientProcess::CreateMutext;
+mutex ClientProcess::AddMutext;
+
+const int ClientProcess::ProcessCount = 5;
+const int ClientProcess::MaxSemaphore = 1000;
+
+void ClientProcess::AddData(Client* client, char* data, int count)
+{
+	ClientProcess::AddMutext.lock();
+	this->_dataQueue->push(RequestPack{ client, data, count });
+	ReleaseSemaphore(this->_semaphore, 1, NULL);
+	ClientProcess::AddMutext.unlock();
+}
+
+ClientProcess::ClientProcess()
+{
+	this->_dataQueue = new queue<RequestPack>();
+	this->_semaphore = CreateSemaphore(NULL, 0, ClientProcess::MaxSemaphore, NULL);
+	if (this->_semaphore == 0)
+		throw 1;
+	this->_threadVector = new vector<thread*>();
+	for (int i = 0; i < ClientProcess::ProcessCount; i++)
+	{
+		this->_threadVector->push_back(new thread(mem_fn(&ClientProcess::ProcessThread), this));
+	}
+}
+
+ClientProcess* ClientProcess::GetInstance()
+{
+	if (ClientProcess::_instance != nullptr)
+		return ClientProcess::_instance;
+	ClientProcess::CreateMutext.lock();
+	ClientProcess::_instance = new ClientProcess();
+	ClientProcess::CreateMutext.unlock();
+	return ClientProcess::_instance;
+}
+
+void ClientProcess::ProcessThread()
+{
+	while (true)
+	{
+		WaitForSingleObject(this->_semaphore, INFINITE);
+	}
 }
 
 class Server
@@ -415,6 +497,8 @@ int _tmain(int argc, _TCHAR* argv[])
 	{
 		exit(0);
 	}
+
+	ClientProcess::GetInstance();
 
 	Server* server = new Server("10.2.0.182", 1525);
 	server->Start();
