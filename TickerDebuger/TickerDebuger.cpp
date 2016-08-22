@@ -196,6 +196,7 @@ protected:
 	bool _isClose;
 	int _waitEndSend;
 	int _waitEndRecv;
+	int _waitProcess;
 	list<DataPack*>* _recvData;
 private:
 	BaseProtocol* _protocolCehcker;
@@ -205,6 +206,7 @@ public:
 		, _isClose(false)
 		, _waitEndRecv(0)
 		, _waitEndSend(0)
+		, _waitProcess(0)
 	{
 		_sendQueue = new queue<OperatorObject*>();
 		this->_sendMutex = new mutex();
@@ -216,6 +218,8 @@ public:
 	void EndRecv(OperatorObject* recvObj, DWORD opCount);
 	void EndSend(OperatorObject* sendData, DWORD opCount);
 	void SendData(char* data, int length);
+	void EndProcess();
+	void Close(){ this->_isClose = true; this->CloseClient(); }
 	~Client()
 	{
 		delete _sendQueue;
@@ -243,6 +247,7 @@ private:
 	static ClientProcess* _instance;
 	static mutex CreateMutext;
 	static mutex AddMutext;
+	static mutex GetDataMutex;
 	vector<thread*>* _threadVector;
 	ClientProcess();
 	void ProcessThread();
@@ -287,7 +292,9 @@ void Client::EndRecv(OperatorObject* recvObj, DWORD opCount)
 	auto result = this->_protocolCehcker->CheckData(this->_recvData);
 	while (result.count > 0)
 	{
+		this->_waitProcess++;
 		ClientProcess::GetInstance()->AddData(this, result.data, result.count);
+		result = this->_protocolCehcker->CheckData(this->_recvData);
 	}
 
 
@@ -303,7 +310,7 @@ void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
 		this->CloseClient();
 		return;
 	}
-	bool success = false;
+	bool success = true;
 	this->_sendMutex->lock();
 	OperatorObject* frontData = this->_sendQueue->front();
 	if (frontData != sendObj)
@@ -319,11 +326,14 @@ void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
 	}
 	else
 	{
-		this->_sendQueue->pop();
 		delete frontData;
-		frontData = this->_sendQueue->front();
-		this->_waitEndSend++;
-		WSASend(this->_socket, &frontData->_sendWSABUF, 1, (LPDWORD)&frontData->_sendCount, Flag, &frontData->_overlapped, nullptr);
+		this->_sendQueue->pop();
+		if (this->_sendQueue->size() > 0)
+		{
+			frontData = this->_sendQueue->front();
+			this->_waitEndSend++;
+			WSASend(this->_socket, &frontData->_sendWSABUF, 1, (LPDWORD)&frontData->_sendCount, Flag, &frontData->_overlapped, nullptr);
+		}
 	}
 	this->_sendMutex->unlock();
 	if (!success)
@@ -348,14 +358,21 @@ void Client::SendData(char* data, int length)
 
 void Client::CloseClient()
 {
-	if (this->_isClose && this->_waitEndRecv == 0 && this->_waitEndSend == 0)
+	if (this->_isClose && this->_waitEndRecv == 0 && this->_waitEndSend == 0 && this->_waitProcess == 0)
 		delete this;
 }
 
+void Client::EndProcess()
+{
+	this->_waitProcess--;
+	if (this->_isClose)
+		this->CloseClient();
+}
 
 ClientProcess* ClientProcess::_instance = nullptr;
 mutex ClientProcess::CreateMutext;
 mutex ClientProcess::AddMutext;
+mutex ClientProcess::GetDataMutex;
 
 const int ClientProcess::ProcessCount = 5;
 const int ClientProcess::MaxSemaphore = 1000;
@@ -396,6 +413,20 @@ void ClientProcess::ProcessThread()
 	while (true)
 	{
 		WaitForSingleObject(this->_semaphore, INFINITE);
+		this->GetDataMutex.lock();
+		auto data = this->_dataQueue->front();
+		this->_dataQueue->pop();
+		this->GetDataMutex.unlock();
+		char* command = data._data + 1;
+		if (memcmp(command, "getDnsList", data._data[0] - 1) == 0)
+		{
+			char* buf = new char[11];
+			memcpy(buf + 1, "10.2.0.182", 10);
+			buf[0] = 11;
+			data._client->SendData(buf, 11);
+		}
+		delete data._data;
+		data._client->EndProcess();
 	}
 }
 
