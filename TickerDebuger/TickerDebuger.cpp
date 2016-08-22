@@ -220,16 +220,28 @@ public:
 	void SendData(char* data, int length);
 	void EndProcess();
 	void Close(){ this->_isClose = true; this->CloseClient(); }
-	~Client()
-	{
-		delete _sendQueue;
-		delete _recvData;
-		delete _sendMutex;
-	}
+	~Client();
 private:
 	void CloseClient();
 };
-
+Client::~Client()
+{
+	while (!this->_sendQueue->empty())
+	{
+		auto d = this->_sendQueue->front();
+		this->_sendQueue->pop(); 
+		delete d;
+	}
+	delete _sendQueue;
+	while (!this->_recvData->empty())
+	{
+		auto d = this->_recvData->front();
+		this->_recvData->pop_front();
+		delete d;
+	}
+	delete _recvData;
+	delete _sendMutex;
+}
 struct RequestPack
 {
 	Client* _client;
@@ -326,8 +338,8 @@ void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
 	}
 	else
 	{
-		delete frontData;
 		this->_sendQueue->pop();
+		delete frontData;
 		if (this->_sendQueue->size() > 0)
 		{
 			frontData = this->_sendQueue->front();
