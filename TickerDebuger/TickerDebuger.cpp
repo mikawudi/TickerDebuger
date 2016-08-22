@@ -202,6 +202,7 @@ protected:
 	list<DataPack*>* _recvData;
 private:
 	BaseProtocol* _protocolCehcker;
+	bool isDisponse = false;
 public:
 	Client(SOCKET socket)
 		: _socket(socket)
@@ -221,28 +222,29 @@ public:
 	void EndSend(OperatorObject* sendData, DWORD opCount);
 	void SendData(char* data, int length);
 	void EndProcess();
-	void Close(){ this->_isClose = true; this->CloseClient(); }
+	void Close() { this->_isClose = true; closesocket(this->_socket); this->CloseClient(); }
 	~Client();
 private:
 	void CloseClient();
 };
 Client::~Client()
 {
-	while (!this->_sendQueue->empty())
+	/*while (!this->_sendQueue->empty())
 	{
 		auto d = this->_sendQueue->front();
 		this->_sendQueue->pop(); 
 		delete d;
-	}
+	}*/
 	delete _sendQueue;
-	while (!this->_recvData->empty())
+	/*while (!this->_recvData->empty())
 	{
 		auto d = this->_recvData->front();
 		this->_recvData->pop_front();
 		delete d;
-	}
+	}*/
 	delete _recvData;
 	delete _sendMutex;
+	this->isDisponse = true;
 }
 struct RequestPack
 {
@@ -260,8 +262,7 @@ public:
 private:
 	static ClientProcess* _instance;
 	static mutex CreateMutext;
-	static mutex* AddMutext;
-	static mutex* GetDataMutex;
+	static mutex QueueMutext;
 	vector<thread*>* _threadVector;
 	ClientProcess();
 	void ProcessThread();
@@ -294,8 +295,7 @@ void Client::EndRecv(OperatorObject* recvObj, DWORD opCount)
 	}
 	if (opCount == 0)
 	{
-		this->_isClose = true;
-		this->CloseClient();
+		this->Close();
 		return;
 	}
 	//op
@@ -318,12 +318,6 @@ void Client::EndRecv(OperatorObject* recvObj, DWORD opCount)
 
 void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
 {
-	this->_waitEndSend--;
-	if (this->_isClose)
-	{
-		this->CloseClient();
-		return;
-	}
 	bool success = true;
 	this->_sendMutex->lock();
 	OperatorObject* frontData = this->_sendQueue->front();
@@ -336,11 +330,12 @@ void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
 		char* newData = (char*)malloc(reSendCount);
 		memcpy((void*)newData, (frontData->_sendWSABUF.buf + opCount), reSendCount);
 		frontData->ReSetSend(newData, reSendCount);
+		this->_waitEndSend++;
 		WSASend(this->_socket, &frontData->_sendWSABUF, 1, (LPDWORD)&frontData->_sendCount, Flag, &frontData->_overlapped, nullptr);
 	}
 	else
 	{
-		//delete frontData;
+		delete frontData;
 		this->_sendQueue->pop();
 		if (this->_sendQueue->size() > 0)
 		{
@@ -352,6 +347,12 @@ void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
 	this->_sendMutex->unlock();
 	if (!success)
 		throw 1;
+	this->_waitEndSend--;
+	if (this->_isClose)
+	{
+		this->CloseClient();
+		return;
+	}
 }
 
 void Client::SendData(char* data, int length)
@@ -372,8 +373,8 @@ void Client::SendData(char* data, int length)
 
 void Client::CloseClient()
 {
-	//if (this->_isClose && this->_waitEndRecv == 0 && this->_waitEndSend == 0 && this->_waitProcess == 0)
-		//delete this;
+	if (this->_isClose && this->_waitEndRecv == 0 && this->_waitEndSend == 0 && this->_waitProcess == 0)
+		delete this;
 }
 
 void Client::EndProcess()
@@ -385,18 +386,17 @@ void Client::EndProcess()
 
 ClientProcess* ClientProcess::_instance = nullptr;
 mutex ClientProcess::CreateMutext;
-mutex* ClientProcess::AddMutext = new mutex();
-mutex* ClientProcess::GetDataMutex = new mutex();
+mutex ClientProcess::QueueMutext;
 
 const int ClientProcess::ProcessCount = 5;
 const int ClientProcess::MaxSemaphore = 1000;
 
 void ClientProcess::AddData(Client* client, char* data, int count)
 {
-	ClientProcess::AddMutext->lock();
+	ClientProcess::QueueMutext.lock();
 	this->_dataQueue->push(RequestPack{ client, data, count });
 	ReleaseSemaphore(this->_semaphore, 1, NULL);
-	ClientProcess::AddMutext->unlock();
+	ClientProcess::QueueMutext.unlock();
 }
 
 ClientProcess::ClientProcess()
@@ -427,7 +427,7 @@ void ClientProcess::ProcessThread()
 	while (true)
 	{
 		WaitForSingleObject(this->_semaphore, INFINITE);
-		ClientProcess::GetDataMutex->lock();
+		ClientProcess::QueueMutext.lock();
 		/*if (isLock == false)
 		{
 			DWORD dd = GetLastError();
@@ -435,7 +435,7 @@ void ClientProcess::ProcessThread()
 		}*/
 		auto data = this->_dataQueue->front();
 		this->_dataQueue->pop();
-		ClientProcess::GetDataMutex->unlock();
+		ClientProcess::QueueMutext.unlock();
 		char* command = data._data + 1;
 		if (memcmp(command, "getDnsList", data._data[0] - 1) == 0)
 		{
@@ -444,7 +444,7 @@ void ClientProcess::ProcessThread()
 			buf[0] = 11;
 			data._client->SendData(buf, 11);
 		}
-		//delete data._data;
+		delete data._data;
 		data._client->EndProcess();
 	}
 }
@@ -538,9 +538,68 @@ void Server::WorkThread()
 	}
 }
 
+class Worker
+{
+public:
+	Worker();
+	void SendData(int data);
+protected:
+	list<thread*>* threadList;
+	HANDLE semaphore;
+	queue<int>* dataQueue;
+	static mutex* GetMutex;
+	static mutex* AddMutex;
+private:
+	void ThreadWork();
+};
+
+mutex* Worker::GetMutex = new mutex();
+
+Worker::Worker()
+{
+	this->threadList = new list<thread*>();
+	this->semaphore = CreateSemaphore(NULL, 0, 100000, nullptr);
+	this->dataQueue = new queue<int>();
+	for (int i = 0; i < 10; i++)
+	{
+		this->threadList->push_back(new thread(mem_fn(&Worker::ThreadWork), this));
+	}
+}
+
+void Worker::ThreadWork()
+{
+	while (true)
+	{
+		WaitForSingleObject(this->semaphore, INFINITE);
+		Worker::GetMutex->lock();
+		if (dataQueue->empty())
+		{
+			Worker::GetMutex->unlock();
+			return;
+		}
+		dataQueue->front();
+		dataQueue->pop();
+		Worker::GetMutex->unlock();
+	}
+}
+
+void Worker::SendData(int data)
+{
+	Worker::GetMutex->lock();
+	this->dataQueue->push(data);
+	ReleaseSemaphore(this->semaphore, 1, NULL);
+	Worker::GetMutex->unlock();
+}
+
 int _tmain(int argc, _TCHAR* argv[])
 {
-
+	/*auto worker = new Worker();
+	for (int i = 0; i < 100000; i++)
+	{
+		worker->SendData(i);
+	}
+	int aa = 0;
+	cin >> aa;*/
 	WSADATA wsaData;
 	int nRet;
 	if ((nRet = WSAStartup(MAKEWORD(2, 2), &wsaData)) != 0)
