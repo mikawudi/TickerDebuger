@@ -9,6 +9,8 @@
 #include "mutex"
 #include "iostream"
 
+#include "assert.h"
+
 using namespace std;
 enum OP_TYPE{ Read = 1, Write = 2 };
 
@@ -258,8 +260,8 @@ public:
 private:
 	static ClientProcess* _instance;
 	static mutex CreateMutext;
-	static mutex AddMutext;
-	static mutex GetDataMutex;
+	static mutex* AddMutext;
+	static mutex* GetDataMutex;
 	vector<thread*>* _threadVector;
 	ClientProcess();
 	void ProcessThread();
@@ -338,8 +340,8 @@ void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
 	}
 	else
 	{
+		//delete frontData;
 		this->_sendQueue->pop();
-		delete frontData;
 		if (this->_sendQueue->size() > 0)
 		{
 			frontData = this->_sendQueue->front();
@@ -370,8 +372,8 @@ void Client::SendData(char* data, int length)
 
 void Client::CloseClient()
 {
-	if (this->_isClose && this->_waitEndRecv == 0 && this->_waitEndSend == 0 && this->_waitProcess == 0)
-		delete this;
+	//if (this->_isClose && this->_waitEndRecv == 0 && this->_waitEndSend == 0 && this->_waitProcess == 0)
+		//delete this;
 }
 
 void Client::EndProcess()
@@ -383,18 +385,18 @@ void Client::EndProcess()
 
 ClientProcess* ClientProcess::_instance = nullptr;
 mutex ClientProcess::CreateMutext;
-mutex ClientProcess::AddMutext;
-mutex ClientProcess::GetDataMutex;
+mutex* ClientProcess::AddMutext = new mutex();
+mutex* ClientProcess::GetDataMutex = new mutex();
 
 const int ClientProcess::ProcessCount = 5;
 const int ClientProcess::MaxSemaphore = 1000;
 
 void ClientProcess::AddData(Client* client, char* data, int count)
 {
-	ClientProcess::AddMutext.lock();
+	ClientProcess::AddMutext->lock();
 	this->_dataQueue->push(RequestPack{ client, data, count });
 	ReleaseSemaphore(this->_semaphore, 1, NULL);
-	ClientProcess::AddMutext.unlock();
+	ClientProcess::AddMutext->unlock();
 }
 
 ClientProcess::ClientProcess()
@@ -425,10 +427,15 @@ void ClientProcess::ProcessThread()
 	while (true)
 	{
 		WaitForSingleObject(this->_semaphore, INFINITE);
-		this->GetDataMutex.lock();
+		ClientProcess::GetDataMutex->lock();
+		/*if (isLock == false)
+		{
+			DWORD dd = GetLastError();
+			return;
+		}*/
 		auto data = this->_dataQueue->front();
 		this->_dataQueue->pop();
-		this->GetDataMutex.unlock();
+		ClientProcess::GetDataMutex->unlock();
 		char* command = data._data + 1;
 		if (memcmp(command, "getDnsList", data._data[0] - 1) == 0)
 		{
@@ -437,7 +444,7 @@ void ClientProcess::ProcessThread()
 			buf[0] = 11;
 			data._client->SendData(buf, 11);
 		}
-		delete data._data;
+		//delete data._data;
 		data._client->EndProcess();
 	}
 }
@@ -541,6 +548,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		exit(0);
 	}
 
+	int returnCode = _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_WNDW);
 	ClientProcess::GetInstance();
 
 	Server* server = new Server("10.2.0.182", 1525);
