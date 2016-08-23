@@ -195,9 +195,8 @@ public:
 protected:
 	queue<OperatorObject*>* _sendQueue;
 	mutex* _sendMutex;
-	bool _isClose;
 	int _waitEndSend;
-	int _waitEndRecv;
+	bool _isEndRecv;
 	int _waitProcess;
 	list<DataPack*>* _recvData;
 private:
@@ -206,8 +205,7 @@ private:
 public:
 	Client(SOCKET socket)
 		: _socket(socket)
-		, _isClose(false)
-		, _waitEndRecv(0)
+		, _isEndRecv(false)
 		, _waitEndSend(0)
 		, _waitProcess(0)
 	{
@@ -222,7 +220,7 @@ public:
 	void EndSend(OperatorObject* sendData, DWORD opCount);
 	void SendData(char* data, int length);
 	void EndProcess();
-	void Close() { this->_isClose = true; closesocket(this->_socket); this->CloseClient(); }
+	void Close() { closesocket(this->_socket); this->CloseClient(); }
 	~Client();
 private:
 	void CloseClient();
@@ -278,26 +276,12 @@ void Client::StartRecv()
 
 void Client::StartRecv(OperatorObject* operatorObject)
 {
-	if (this->_isClose)
-		return;
 	DWORD Flag = 0;
-	this->_waitEndRecv++;
 	WSARecv(this->_socket, &operatorObject->_recvWSABUF, 1, (LPDWORD)&operatorObject->_recvCount, &Flag, &operatorObject->_overlapped, nullptr);
 }
 
 void Client::EndRecv(OperatorObject* recvObj, DWORD opCount)
 {
-	this->_waitEndRecv--;
-	if (this->_isClose)
-	{
-		this->CloseClient();
-		return;
-	}
-	if (opCount == 0)
-	{
-		this->Close();
-		return;
-	}
 	//op
 	DataPack* pack = new DataPack();
 	pack->data = (char*)recvObj->_recvDataBuff;
@@ -311,9 +295,16 @@ void Client::EndRecv(OperatorObject* recvObj, DWORD opCount)
 		result = this->_protocolCehcker->CheckData(this->_recvData);
 	}
 
-
-	recvObj->ReSet();
-	this->StartRecv(recvObj);
+	if (opCount != 0)
+	{
+		recvObj->ReSet();
+		this->StartRecv(recvObj);
+	}
+	else
+	{
+		this->_isEndRecv = true;
+		this->Close();
+	}
 }
 
 void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
@@ -348,7 +339,7 @@ void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
 	if (!success)
 		throw 1;
 	this->_waitEndSend--;
-	if (this->_isClose)
+	if (this->_isEndRecv)
 	{
 		this->CloseClient();
 		return;
@@ -357,8 +348,6 @@ void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
 
 void Client::SendData(char* data, int length)
 {
-	if (this->_isClose)
-		return;
 	DWORD Flag = 0;
 	auto writeOP = new OperatorObject(data, length);
 	this->_sendMutex->lock();
@@ -373,14 +362,21 @@ void Client::SendData(char* data, int length)
 
 void Client::CloseClient()
 {
-	if (this->_isClose && this->_waitEndRecv == 0 && this->_waitEndSend == 0 && this->_waitProcess == 0)
+	if (this->_isEndRecv && this->_waitEndSend == 0 && this->_waitProcess == 0)
+	{
+		if (this->isDisponse)
+		{
+			return;
+		}
+		this->isDisponse = true;
 		delete this;
+	}
 }
 
 void Client::EndProcess()
 {
 	this->_waitProcess--;
-	if (this->_isClose)
+	if (this->_isEndRecv)
 		this->CloseClient();
 }
 
