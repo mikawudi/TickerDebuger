@@ -195,6 +195,7 @@ public:
 protected:
 	queue<OperatorObject*>* _sendQueue;
 	mutex* _sendMutex;
+	mutex* _dispMutex;
 	int _waitEndSend;
 	bool _isEndRecv;
 	int _waitProcess;
@@ -211,6 +212,7 @@ public:
 	{
 		_sendQueue = new queue<OperatorObject*>();
 		this->_sendMutex = new mutex();
+		this->_dispMutex = new mutex();
 		this->_recvData = new list<DataPack*>();
 		this->_protocolCehcker = new MyProtocol();
 	}
@@ -220,26 +222,26 @@ public:
 	void EndSend(OperatorObject* sendData, DWORD opCount);
 	void SendData(char* data, int length);
 	void EndProcess();
-	void Close() { closesocket(this->_socket); this->CloseClient(); }
+	bool Close() { closesocket(this->_socket); return this->CloseClient(); }
 	~Client();
 private:
-	void CloseClient();
+	bool CloseClient();
 };
 Client::~Client()
 {
-	/*while (!this->_sendQueue->empty())
+	while (!this->_sendQueue->empty())
 	{
 		auto d = this->_sendQueue->front();
 		this->_sendQueue->pop(); 
 		delete d;
-	}*/
+	}
 	delete _sendQueue;
-	/*while (!this->_recvData->empty())
+	while (!this->_recvData->empty())
 	{
 		auto d = this->_recvData->front();
 		this->_recvData->pop_front();
 		delete d;
-	}*/
+	}
 	delete _recvData;
 	delete _sendMutex;
 	this->isDisponse = true;
@@ -282,28 +284,31 @@ void Client::StartRecv(OperatorObject* operatorObject)
 
 void Client::EndRecv(OperatorObject* recvObj, DWORD opCount)
 {
-	//op
-	DataPack* pack = new DataPack();
-	pack->data = (char*)recvObj->_recvDataBuff;
-	pack->length = opCount;
-	this->_recvData->push_back(pack);
-	auto result = this->_protocolCehcker->CheckData(this->_recvData);
-	while (result.count > 0)
-	{
-		this->_waitProcess++;
-		ClientProcess::GetInstance()->AddData(this, result.data, result.count);
-		result = this->_protocolCehcker->CheckData(this->_recvData);
-	}
-
 	if (opCount != 0)
 	{
+		DataPack* pack = new DataPack();
+		pack->data = (char*)recvObj->_recvDataBuff;
+		pack->length = opCount;
+		this->_recvData->push_back(pack);
+		auto result = this->_protocolCehcker->CheckData(this->_recvData);
+		while (result.count > 0)
+		{
+			this->_waitProcess++;
+			ClientProcess::GetInstance()->AddData(this, result.data, result.count);
+			result = this->_protocolCehcker->CheckData(this->_recvData);
+		}
 		recvObj->ReSet();
 		this->StartRecv(recvObj);
 	}
 	else
 	{
+		mutex* t = this->_dispMutex;
+		t->lock();
 		this->_isEndRecv = true;
-		this->Close();
+		bool isSuc = this->Close();
+		t->unlock();
+		if (isSuc)
+			delete t;
 	}
 }
 
@@ -338,12 +343,17 @@ void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
 	this->_sendMutex->unlock();
 	if (!success)
 		throw 1;
+	mutex* t = this->_dispMutex;
+	t->lock();
+	bool isSucc = false;
 	this->_waitEndSend--;
 	if (this->_isEndRecv)
 	{
-		this->CloseClient();
-		return;
+		isSucc = this->CloseClient();
 	}
+	t->unlock();
+	if (isSucc)
+		delete t;
 }
 
 void Client::SendData(char* data, int length)
@@ -360,24 +370,32 @@ void Client::SendData(char* data, int length)
 	this->_sendMutex->unlock();
 }
 
-void Client::CloseClient()
+bool Client::CloseClient()
 {
 	if (this->_isEndRecv && this->_waitEndSend == 0 && this->_waitProcess == 0)
 	{
-		if (this->isDisponse)
+		/*if (this->isDisponse)
 		{
 			return;
-		}
-		this->isDisponse = true;
+		}*/
+		//this->isDisponse = true;
 		delete this;
+		return true;
 	}
+	return false;
 }
 
 void Client::EndProcess()
 {
+	bool isSucc = false;
+	mutex* t = this->_dispMutex;
+	t->lock();
 	this->_waitProcess--;
 	if (this->_isEndRecv)
-		this->CloseClient();
+		isSucc = this->CloseClient();
+	t->unlock();
+	if (isSucc)
+		delete t;
 }
 
 ClientProcess* ClientProcess::_instance = nullptr;
@@ -596,6 +614,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	}
 	int aa = 0;
 	cin >> aa;*/
+
 	WSADATA wsaData;
 	int nRet;
 	if ((nRet = WSAStartup(MAKEWORD(2, 2), &wsaData)) != 0)
@@ -603,9 +622,9 @@ int _tmain(int argc, _TCHAR* argv[])
 		exit(0);
 	}
 
-	int returnCode = _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_WNDW);
 	ClientProcess::GetInstance();
 
+	int returnCode = _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_WNDW);
 	Server* server = new Server("10.2.0.182", 1525);
 	server->Start();
 	int rec = 0;
