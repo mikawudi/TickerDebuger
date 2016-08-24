@@ -137,7 +137,7 @@ public:
 public:
 	WSAOVERLAPPED _overlapped;
 	OP_TYPE _op;
-	char* _sendData;
+	char* _sendDataBuff;
 	byte* _recvDataBuff;
 	WSABUF _recvWSABUF;
 	int _recvCount;
@@ -154,7 +154,7 @@ public:
 	}
 	OperatorObject(char* data, int dataLen)
 		: _op(OP_TYPE::Write)
-		, _sendData(data)
+		, _sendDataBuff(data)
 	{
 		this->_sendWSABUF.buf = data;
 		this->_sendWSABUF.len = dataLen;
@@ -162,10 +162,16 @@ public:
 	}
 	void ReSet();
 	void ReSetSend(char* newData, int length);
+	~OperatorObject();
 private:
 	void InitRead();
 	void InitWrite();
 };
+OperatorObject::~OperatorObject()
+{
+	delete this->_recvDataBuff;
+	delete this->_sendDataBuff;
+}
 
 void OperatorObject::InitRead()
 {
@@ -184,7 +190,10 @@ void OperatorObject::ReSet()
 }
 void OperatorObject::ReSetSend(char* newData, int length)
 {
-
+	delete this->_sendDataBuff;
+	this->_sendDataBuff = newData;
+	this->_sendWSABUF.buf = this->_sendDataBuff;
+	this->_sendWSABUF.len = length;
 }
 //PreIO object
 
@@ -200,6 +209,7 @@ protected:
 	bool _isEndRecv;
 	int _waitProcess;
 	list<DataPack*>* _recvData;
+	OperatorObject* _recvOperatorObject;
 private:
 	BaseProtocol* _protocolCehcker;
 	bool isDisponse = false;
@@ -215,6 +225,7 @@ public:
 		this->_dispMutex = new mutex();
 		this->_recvData = new list<DataPack*>();
 		this->_protocolCehcker = new MyProtocol();
+		this->_recvOperatorObject = new OperatorObject();
 	}
 	void StartRecv();
 	void StartRecv(OperatorObject* operatorObj);
@@ -244,6 +255,8 @@ Client::~Client()
 	}
 	delete _recvData;
 	delete _sendMutex;
+	delete this->_protocolCehcker;
+	delete this->_recvOperatorObject;
 	this->isDisponse = true;
 }
 struct RequestPack
@@ -273,7 +286,7 @@ protected:
 
 void Client::StartRecv()
 {
-	this->StartRecv(new OperatorObject());
+	this->StartRecv(this->_recvOperatorObject);
 }
 
 void Client::StartRecv(OperatorObject* operatorObject)
@@ -358,15 +371,17 @@ void Client::EndSend(OperatorObject* sendObj, DWORD opCount)
 
 void Client::SendData(char* data, int length)
 {
+	this->_waitEndSend++;
 	DWORD Flag = 0;
 	auto writeOP = new OperatorObject(data, length);
 	this->_sendMutex->lock();
 	this->_sendQueue->push(writeOP);
 	if (this->_sendQueue->size() == 1)
 	{
-		this->_waitEndSend++;
 		WSASend(this->_socket, &writeOP->_sendWSABUF, 1, (LPDWORD)&writeOP->_sendCount, Flag, &writeOP->_overlapped, nullptr);
 	}
+	else
+		this->_waitEndSend--;
 	this->_sendMutex->unlock();
 }
 
@@ -533,6 +548,9 @@ void Server::AcceptThread()
 		client->StartRecv();
 	}
 }
+int ccc = 0;
+int bbb = 0;
+int aaa = 0;
 void Server::WorkThread()
 {
 	while (true)
@@ -543,11 +561,20 @@ void Server::WorkThread()
 		BOOL result = GetQueuedCompletionStatus(this->_iocpObjc, &opCount, (PULONG_PTR)&client, (LPOVERLAPPED*)&opObject, INFINITE);
 		if (opObject->_op == OP_TYPE::Read)
 		{
+			aaa++;
 			client->EndRecv(opObject, opCount);
+			continue;
 		}
 		if (opObject->_op == OP_TYPE::Write)
 		{
+			bbb++;
+			if (opCount == 0)
+			{
+				ccc++;
+				continue;
+			}
 			client->EndSend(opObject, opCount);
+			continue;
 		}
 	}
 }
