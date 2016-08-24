@@ -8,6 +8,7 @@
 #include "queue"
 #include "mutex"
 #include "iostream"
+#include "map"
 
 #include "assert.h"
 
@@ -128,6 +129,84 @@ void MyProtocol::DeleteData(list<DataPack*>* data, int count)
 		delete data->front();
 		data->pop_front();
 	}
+}
+
+class DataList
+{
+public:
+	static DataList* GetInstance();
+private:
+	static DataList* instance;
+	static mutex createMutex;
+	mutex* _dataMutex;
+	map<int32_t, UINT32>* _servermap;
+	DataList();
+public:
+	void AddData(int32_t key, UINT32 value);
+	int GetData(int32_t key, char** data);
+	void DeleteData(int32_t key);
+};
+mutex DataList::createMutex;
+DataList* DataList::instance;
+DataList::DataList()
+{
+	this->_dataMutex = new mutex();
+	this->_servermap = new map<int32_t, UINT32>();
+}
+DataList* DataList::GetInstance()
+{
+	if (DataList::instance != nullptr)
+		return DataList::instance;
+	DataList::createMutex.lock();
+	if (DataList::instance == nullptr)
+		DataList::instance = new DataList();
+	DataList::createMutex.unlock();
+	return DataList::instance;
+}
+void DataList::AddData(int32_t key, UINT32 value)
+{
+	this->_dataMutex->lock();
+	auto findResult = this->_servermap->find(key);
+	if (findResult == this->_servermap->end())
+	{
+		this->_servermap->insert(pair<int32_t, UINT32>(key, value));
+	}
+	else
+	{
+		findResult->second = value;
+	}
+	this->_dataMutex->unlock();
+}
+int DataList::GetData(int32_t key, char** data)
+{
+	char* result = nullptr;
+	int resultCount = 0;
+	this->_dataMutex->lock();
+	int length = this->_servermap->size();
+	if (length != 0)
+	{
+		result = new char[length * 9];
+		for (auto kvp : *this->_servermap)
+		{
+			*(result + resultCount) = 4;
+			*((UINT32*)(result + resultCount + 1)) = kvp.first;
+			*((UINT32*)(result + resultCount + 5)) = kvp.second;
+			resultCount += 9;
+		}
+	}
+	this->_dataMutex->unlock();
+	*data = result;
+	return resultCount;
+}
+void DataList::DeleteData(int32_t key)
+{
+	this->_dataMutex->lock();
+	auto findResult = this->_servermap->find(key);
+	if (findResult != this->_servermap->end())
+	{
+		this->_servermap->erase(findResult);
+	}
+	this->_dataMutex->unlock();
 }
 
 class OperatorObject
@@ -641,6 +720,20 @@ int _tmain(int argc, _TCHAR* argv[])
 	}
 	int aa = 0;
 	cin >> aa;*/
+
+	/*map<UINT32, UINT32>* mapss = new map<UINT32, UINT32>();
+	mapss->insert(pair<UINT32, UINT32>(11111111, 1111));
+	mapss->insert(pair<UINT32, UINT32>(11111112, 1112));
+	mapss->insert(pair<UINT32, UINT32>(11111113, 1113));
+	char* temp = new char[mapss->size() * 9];
+	int start = 0;
+	for (auto kvp : *mapss)
+	{
+		*(temp + start) = 4;
+		*((UINT32*)(temp + start + 1)) = kvp.first;
+		*((UINT32*)(temp + start + 5)) = kvp.second;
+		start += 9;
+	}*/
 
 	WSADATA wsaData;
 	int nRet;
