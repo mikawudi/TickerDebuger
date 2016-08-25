@@ -22,6 +22,7 @@ struct ServerTag
 	INT64 IP_VALUE;
 	UINT16 TCP_PORT;
 	int C_COUNT;
+	byte KEY_COUNT;
 };
 #pragma pack ()
 struct DataPack
@@ -147,19 +148,19 @@ private:
 	static DataList* instance;
 	static mutex createMutex;
 	mutex* _dataMutex;
-	map<INT64, ServerTag>* _servermap;
+	map<string, ServerTag>* _servermap;
 	DataList();
 public:
-	void AddData(ServerTag value);
+	void AddData(ServerTag value, string& key);
 	int GetData(char** data);
-	void DeleteData(INT64 key);
+	void DeleteData(string& key);
 };
 mutex DataList::createMutex;
 DataList* DataList::instance;
 DataList::DataList()
 {
 	this->_dataMutex = new mutex();
-	this->_servermap = new map<INT64, ServerTag>();
+	this->_servermap = new map<string, ServerTag>();
 }
 DataList* DataList::GetInstance()
 {
@@ -171,13 +172,13 @@ DataList* DataList::GetInstance()
 	DataList::createMutex.unlock();
 	return DataList::instance;
 }
-void DataList::AddData(ServerTag value)
+void DataList::AddData(ServerTag value, string& key)
 {
 	this->_dataMutex->lock();
-	auto findResult = this->_servermap->find(value.IP_VALUE);
+	auto findResult = this->_servermap->find(key);
 	if (findResult == this->_servermap->end())
 	{
-		this->_servermap->insert(pair<INT64, ServerTag>(value.IP_VALUE, value));
+		this->_servermap->insert(pair<string, ServerTag>(key, value));
 	}
 	else
 	{
@@ -204,7 +205,7 @@ int DataList::GetData(char** data)
 	*data = result;
 	return resultCount;
 }
-void DataList::DeleteData(INT64 key)
+void DataList::DeleteData(string& key)
 {
 	this->_dataMutex->lock();
 	auto findResult = this->_servermap->find(key);
@@ -750,6 +751,8 @@ enum IP_TYPE{ IPV4, IPV6 };
 struct Command
 {
 	char* commandValue;
+	char* key;
+	byte keyCount;
 	IP_TYPE type;
 	USHORT port;
 	union IP
@@ -773,11 +776,14 @@ bool ParseValue(char* comValue, Command* commandValue)
 	if (strcmp(command, "add") == 0)
 	{
 		char* count = nullptr;
-		char* ipValue = strtok_s(valueData, " ", &count);
-		if (ipValue == nullptr)
+		char* other = nullptr;
+		char* key = strtok_s(valueData, " ", &other);
+		int keyLength = strnlen_s(key, 256);
+		if (keyLength <= 0)
 		{
-			return false;
+			throw 1;
 		}
+		char* ipValue = strtok_s(other, " ", &count);
 		int countvalue = 0;
 		if (sscanf_s(count, "%d", &countvalue) == -1)
 		{
@@ -785,7 +791,7 @@ bool ParseValue(char* comValue, Command* commandValue)
 		}
 		char* iptype = nullptr;
 		char* temp = nullptr;
-		iptype = strtok_s(valueData, ":", &temp);
+		iptype = strtok_s(other, ":", &temp);
 		if (strcmp(iptype, "ipv4") == 0)
 		{
 			char* port = nullptr;
@@ -804,6 +810,8 @@ bool ParseValue(char* comValue, Command* commandValue)
 				commandValue->value = countvalue;
 				commandValue->port = portvalue;
 				commandValue->IPValue.v4 = addr.S_un.S_addr;
+				commandValue->key = key;
+				commandValue->keyCount = keyLength;
 				return true;
 			}
 		}
@@ -832,11 +840,13 @@ bool ReadData()
 	if (resu && strcmp(com.commandValue, "add") == 0)
 	{
 		ServerTag tag;
+		string key(com.key);
 		tag.IP_TYPE = (com.type == IP_TYPE::IPV4 ? 0x04 : 0x06);
 		tag.TCP_PORT = com.port;
 		tag.IP_VALUE = com.IPValue.v4;
 		tag.C_COUNT = com.value;
-		DataList::GetInstance()->AddData(tag);
+		tag.KEY_COUNT = key.size();
+		DataList::GetInstance()->AddData(tag, key);
 	}
 	if (resu && strcmp(com.commandValue, "delete") == 0)
 	{
@@ -869,6 +879,10 @@ int _tmain(int argc, _TCHAR* argv[])
 		*((UINT32*)(temp + start + 5)) = kvp.second;
 		start += 9;
 	}*/
+	while (true)
+	{
+		ReadData();
+	}
 	auto aa = sizeof(ServerTag);
 	WSADATA wsaData;
 	int nRet;
