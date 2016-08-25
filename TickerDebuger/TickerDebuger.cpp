@@ -9,13 +9,21 @@
 #include "mutex"
 #include "iostream"
 #include "map"
+#include "WS2tcpip.h"
 
 #include "assert.h"
 
 using namespace std;
 enum OP_TYPE{ Read = 1, Write = 2 };
-
-
+#pragma pack (1)
+struct ServerTag
+{
+	byte IP_TYPE;
+	INT64 IP_VALUE;
+	UINT16 TCP_PORT;
+	int C_COUNT;
+};
+#pragma pack ()
 struct DataPack
 {
 	char* data;
@@ -139,19 +147,19 @@ private:
 	static DataList* instance;
 	static mutex createMutex;
 	mutex* _dataMutex;
-	map<int32_t, UINT32>* _servermap;
+	map<INT64, ServerTag>* _servermap;
 	DataList();
 public:
-	void AddData(int32_t key, UINT32 value);
-	int GetData(int32_t key, char** data);
-	void DeleteData(int32_t key);
+	void AddData(ServerTag value);
+	int GetData(char** data);
+	void DeleteData(INT64 key);
 };
 mutex DataList::createMutex;
 DataList* DataList::instance;
 DataList::DataList()
 {
 	this->_dataMutex = new mutex();
-	this->_servermap = new map<int32_t, UINT32>();
+	this->_servermap = new map<INT64, ServerTag>();
 }
 DataList* DataList::GetInstance()
 {
@@ -163,13 +171,13 @@ DataList* DataList::GetInstance()
 	DataList::createMutex.unlock();
 	return DataList::instance;
 }
-void DataList::AddData(int32_t key, UINT32 value)
+void DataList::AddData(ServerTag value)
 {
 	this->_dataMutex->lock();
-	auto findResult = this->_servermap->find(key);
+	auto findResult = this->_servermap->find(value.IP_VALUE);
 	if (findResult == this->_servermap->end())
 	{
-		this->_servermap->insert(pair<int32_t, UINT32>(key, value));
+		this->_servermap->insert(pair<INT64, ServerTag>(value.IP_VALUE, value));
 	}
 	else
 	{
@@ -177,7 +185,7 @@ void DataList::AddData(int32_t key, UINT32 value)
 	}
 	this->_dataMutex->unlock();
 }
-int DataList::GetData(int32_t key, char** data)
+int DataList::GetData(char** data)
 {
 	char* result = nullptr;
 	int resultCount = 0;
@@ -185,20 +193,18 @@ int DataList::GetData(int32_t key, char** data)
 	int length = this->_servermap->size();
 	if (length != 0)
 	{
-		result = new char[length * 9];
+		result = new char[length * sizeof(ServerTag)];
 		for (auto kvp : *this->_servermap)
 		{
-			*(result + resultCount) = 4;
-			*((UINT32*)(result + resultCount + 1)) = kvp.first;
-			*((UINT32*)(result + resultCount + 5)) = kvp.second;
-			resultCount += 9;
+			*((ServerTag*)(result + resultCount)) = kvp.second;
+			resultCount += sizeof(ServerTag);
 		}
 	}
 	this->_dataMutex->unlock();
 	*data = result;
 	return resultCount;
 }
-void DataList::DeleteData(int32_t key)
+void DataList::DeleteData(INT64 key)
 {
 	this->_dataMutex->lock();
 	auto findResult = this->_servermap->find(key);
@@ -547,10 +553,30 @@ void ClientProcess::ProcessThread()
 		char* command = data._data + 1;
 		if (memcmp(command, "getDnsList", data._data[0] - 1) == 0)
 		{
-			char* buf = new char[11];
+			/*char* buf = new char[11];
 			memcpy(buf + 1, "10.2.0.182", 10);
 			buf[0] = 11;
-			data._client->SendData(buf, 11);
+			data._client->SendData(buf, 11);*/
+			char* result = nullptr;
+			char* sendBuff = nullptr;
+			int sendCount = 0;
+			int resultCount = DataList::GetInstance()->GetData(&result);
+			if (resultCount > 0)
+			{
+				sendCount = resultCount + 2;
+				sendBuff = new char[resultCount + 2];
+				memcpy(sendBuff + 2, result, resultCount);
+				*((UINT16*)sendBuff) = sendCount;
+				delete result;
+			}
+			else
+			{
+				sendCount = 6;
+				sendBuff = new char[6];
+				memcpy(sendBuff + 2, "fail", 4);
+				*((UINT16*)sendBuff) = 6;
+			}
+			data._client->SendData(sendBuff, sendCount);
 		}
 		delete data._data;
 		data._client->EndProcess();
@@ -627,9 +653,11 @@ void Server::AcceptThread()
 		client->StartRecv();
 	}
 }
+#if _DEBUG
 int ccc = 0;
 int bbb = 0;
 int aaa = 0;
+#endif
 void Server::WorkThread()
 {
 	while (true)
@@ -640,16 +668,22 @@ void Server::WorkThread()
 		BOOL result = GetQueuedCompletionStatus(this->_iocpObjc, &opCount, (PULONG_PTR)&client, (LPOVERLAPPED*)&opObject, INFINITE);
 		if (opObject->_op == OP_TYPE::Read)
 		{
+#if _DEBUG
 			aaa++;
+#endif
 			client->EndRecv(opObject, opCount);
 			continue;
 		}
 		if (opObject->_op == OP_TYPE::Write)
 		{
+#if _DEBUG
 			bbb++;
+#endif
 			if (opCount == 0)
 			{
+#if _DEBUG
 				ccc++;
+#endif
 				continue;
 			}
 			client->EndSend(opObject, opCount);
@@ -711,6 +745,107 @@ void Worker::SendData(int data)
 	Worker::GetMutex->unlock();
 }
 
+enum IP_TYPE{ IPV4, IPV6 };
+
+struct Command
+{
+	char* commandValue;
+	IP_TYPE type;
+	USHORT port;
+	union IP
+	{
+		UINT32 v4;
+		UINT64 v6;
+	} IPValue;
+	int value;
+};
+
+bool ParseValue(char* comValue, Command* commandValue)
+{
+	if (commandValue == nullptr)
+		return false;
+	char* valueData = nullptr;
+	char* command = strtok_s(comValue, " ", &valueData);
+	if (valueData[0] == 0x00)
+	{
+		return false;;
+	}
+	if (strcmp(command, "add") == 0)
+	{
+		char* count = nullptr;
+		char* ipValue = strtok_s(valueData, " ", &count);
+		if (ipValue == nullptr)
+		{
+			return false;
+		}
+		int countvalue = 0;
+		if (sscanf_s(count, "%d", &countvalue) == -1)
+		{
+			return false;
+		}
+		char* iptype = nullptr;
+		char* temp = nullptr;
+		iptype = strtok_s(valueData, ":", &temp);
+		if (strcmp(iptype, "ipv4") == 0)
+		{
+			char* port = nullptr;
+			char* ipvalue = strtok_s(temp, ":", &port);
+			int portvalue = 0;
+			sscanf_s(port, "%d", &portvalue);
+			struct in_addr addr;
+			if (inet_pton(AF_INET, ipvalue, &addr) < 0)
+			{
+				return false;
+			}
+			else
+			{
+				commandValue->commandValue = command;
+				commandValue->type = IP_TYPE::IPV4;
+				commandValue->value = countvalue;
+				commandValue->port = portvalue;
+				commandValue->IPValue.v4 = addr.S_un.S_addr;
+				return true;
+			}
+		}
+		if (strcmp(iptype, "ipv6") == 0)
+		{
+			return false;
+		}
+	}
+	if (strcmp(command, "delete") == 0)
+	{
+
+	}
+}
+
+bool ReadData()
+{
+	//char str[50];
+	//cin.getline(str, 50);
+	//cout << str << endl;
+
+	//char ddd[] = "add ipv4:127.0.0.1:1234 1000";
+	char* input = new char[50];
+	cin.getline(input, 50);
+	Command com;
+	bool resu = ParseValue(input, &com);
+	if (resu && strcmp(com.commandValue, "add") == 0)
+	{
+		ServerTag tag;
+		tag.IP_TYPE = (com.type == IP_TYPE::IPV4 ? 0x04 : 0x06);
+		tag.TCP_PORT = com.port;
+		tag.IP_VALUE = com.IPValue.v4;
+		tag.C_COUNT = com.value;
+		DataList::GetInstance()->AddData(tag);
+	}
+	if (resu && strcmp(com.commandValue, "delete") == 0)
+	{
+
+	}
+	delete input;
+	return resu;
+}
+
 int _tmain(int argc, _TCHAR* argv[])
 {
 	/*auto worker = new Worker();
@@ -734,7 +869,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		*((UINT32*)(temp + start + 5)) = kvp.second;
 		start += 9;
 	}*/
-
+	auto aa = sizeof(ServerTag);
 	WSADATA wsaData;
 	int nRet;
 	if ((nRet = WSAStartup(MAKEWORD(2, 2), &wsaData)) != 0)
@@ -748,7 +883,17 @@ int _tmain(int argc, _TCHAR* argv[])
 	Server* server = new Server("10.2.0.182", 1525);
 	server->Start();
 	int rec = 0;
-	cin >> rec;
+	while (true) 
+	{
+		if (ReadData())
+		{
+			cout << "解析执行成功" << endl;
+		}
+		else
+		{
+			cout << "解析执行失败!" << endl;
+		}
+	};
 	server->Stop();
 	return 0;
 }
