@@ -150,11 +150,15 @@ private:
 	mutex* _dataMutex;
 	map<string, ServerTag>* _servermap;
 	DataList();
+	static char* dataBuffer;
+	static int dataCount;
 public:
 	void AddData(ServerTag value, string& key);
 	int GetData(char** data);
 	void DeleteData(string& key);
 };
+char* DataList::dataBuffer = new char[1024];
+int DataList::dataCount = 1024;
 mutex DataList::createMutex;
 DataList* DataList::instance;
 DataList::DataList()
@@ -824,6 +828,7 @@ bool ParseValue(char* comValue, Command* commandValue)
 	{
 
 	}
+	return false;
 }
 
 bool ReadData()
