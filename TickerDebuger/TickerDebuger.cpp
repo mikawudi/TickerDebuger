@@ -157,8 +157,8 @@ public:
 	int GetData(char** data);
 	void DeleteData(string& key);
 };
-char* DataList::dataBuffer = new char[1024];
-int DataList::dataCount = 1024;
+char* DataList::dataBuffer = nullptr;
+int DataList::dataCount = 0;
 mutex DataList::createMutex;
 DataList* DataList::instance;
 DataList::DataList()
@@ -188,11 +188,29 @@ void DataList::AddData(ServerTag value, string& key)
 	{
 		findResult->second = value;
 	}
+	char* oldData = DataList::dataBuffer;
+	int newCount = 0;
+	for (auto data : *this->_servermap)
+	{
+		newCount += (sizeof(ServerTag) + data.first.size());
+	}
+	char* newData = new char[newCount];
+	int start = 0;
+	for (auto data : *this->_servermap)
+	{
+		*((ServerTag*)(newData + start)) = data.second;
+		string str = data.first;
+		memcpy(newData + sizeof(ServerTag) + start, str.data(), str.size());
+		start += (sizeof(ServerTag) + data.first.size());
+	}
+	DataList::dataBuffer = newData;
+	DataList::dataCount = newCount;
+	delete  oldData;
 	this->_dataMutex->unlock();
 }
 int DataList::GetData(char** data)
 {
-	char* result = nullptr;
+	/*char* result = nullptr;
 	int resultCount = 0;
 	this->_dataMutex->lock();
 	int length = this->_servermap->size();
@@ -207,7 +225,9 @@ int DataList::GetData(char** data)
 	}
 	this->_dataMutex->unlock();
 	*data = result;
-	return resultCount;
+	return resultCount;*/
+	*data = DataList::dataBuffer;
+	return DataList::dataCount;
 }
 void DataList::DeleteData(string& key)
 {
