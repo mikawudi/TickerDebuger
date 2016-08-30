@@ -18,10 +18,17 @@ enum OP_TYPE{ Read = 1, Write = 2 };
 #pragma pack (1)
 struct ServerTag
 {
+	//ip类型(v4 or v6)
 	byte IP_TYPE;
+	//ip值
 	INT64 IP_VALUE;
+	//tcp端口号
 	UINT16 TCP_PORT;
+	//client总数
 	int C_COUNT;
+	//协议类型
+	byte PRO_TYPE;
+	//serverName的长度
 	byte KEY_COUNT;
 };
 #pragma pack ()
@@ -853,10 +860,6 @@ bool ParseValue(char* comValue, Command* commandValue)
 
 bool ReadData()
 {
-	//char str[50];
-	//cin.getline(str, 50);
-	//cout << str << endl;
-
 	//char ddd[] = "add ipv4:127.0.0.1:1234 1000";
 	char* input = new char[50];
 	cin.getline(input, 50);
@@ -871,6 +874,7 @@ bool ReadData()
 		tag.IP_VALUE = com.IPValue.v4;
 		tag.C_COUNT = com.value;
 		tag.KEY_COUNT = key.size();
+		tag.PRO_TYPE = 0x00;
 		DataList::GetInstance()->AddData(tag, key);
 	}
 	if (resu && strcmp(com.commandValue, "delete") == 0)
@@ -879,6 +883,132 @@ bool ReadData()
 	}
 	delete input;
 	return resu;
+}
+
+class NodeClient
+{
+protected:
+	SOCKET _csock;
+	thread* _recvThread;
+	byte* _buffer;
+	static const int bufferCount;
+	virtual bool Login(int recvCount);
+public:
+	NodeClient(SOCKET client);
+	void Start();
+	void RecvThread();
+	~NodeClient();
+};
+
+bool NodeClient::Login(int recvCount)
+{
+	if (recvCount < 2)
+	{
+		return false;
+	}
+	const int16_t* leng = (int16_t*)this->_buffer;
+	if (*leng <= 0 || *leng > 1024)
+	{
+		return false;
+	}
+	const char* start = (char*)this->_buffer + 2;
+	if (memcmp(start, "logins", 6) != 0)
+		return false;
+	start += 8;
+	const int16_t* nameLeng = (int16_t*)start;
+	if (*nameLeng > 30)
+		return false;
+	start += 2;
+	char* name = (char*)malloc((*nameLeng) + 1);
+	name[*nameLeng] = 0x00;
+	memcpy(name, start, *nameLeng);
+
+	delete name;
+	return true;
+}
+
+NodeClient::~NodeClient()
+{
+	delete this->_buffer;
+	delete this->_recvThread;
+}
+
+const int NodeClient::bufferCount = 1024;
+
+NodeClient::NodeClient(SOCKET sock)
+	: _csock(sock)
+{
+	this->_buffer = new byte[NodeClient::bufferCount];
+}
+void NodeClient::Start()
+{
+	this->_recvThread = new thread(mem_fn(&NodeClient::RecvThread), this);
+}
+void NodeClient::RecvThread()
+{
+	//waitLog
+	int recvCount = ::recv(this->_csock, (char*)this->_buffer, NodeClient::bufferCount, 0);
+	
+	if (!this->Login(recvCount))
+	{
+		::closesocket(this->_csock);
+		delete this;
+		return;
+	}
+
+	while (true)
+	{
+		int recvCount = ::recv(this->_csock, (char*)this->_buffer, NodeClient::bufferCount, 0);
+		//被远端close
+		if (recvCount <= 0)
+		{
+			delete this;
+			return;
+		}
+	}
+}
+
+class NodeServer
+{
+private:
+	static const int backlog;
+protected:
+	sockaddr_in _listenAddr;
+	SOCKET _listener;
+	bool _isStop;
+	thread* _acceptThread;
+public:
+	NodeServer(string& host, int port);
+protected:
+	void AcceptThread();
+};
+
+const int NodeServer::backlog = 100;
+
+NodeServer::NodeServer(string& host, int port)
+	:_isStop(false)
+{
+	ZeroMemory(&this->_listenAddr, sizeof(sockaddr_in));
+	this->_listenAddr.sin_family = AF_INET;
+	this->_listenAddr.sin_port = htons(port);
+	this->_listenAddr.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
+	this->_listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	::bind(this->_listener, (sockaddr*)&this->_listenAddr, sizeof(SOCKADDR_IN));
+	::listen(this->_listener, NodeServer::backlog);
+	this->_acceptThread = new thread(mem_fn(&NodeServer::AcceptThread), this);
+}
+
+void NodeServer::AcceptThread()
+{
+	sockaddr remoteAddr;
+	int addrLeng = sizeof(SOCKADDR);
+	while (true)
+	{
+		if (this->_isStop)
+			return;
+		SOCKET remoteClient = ::accept(this->_listener, &remoteAddr, &addrLeng);
+
+	}
 }
 
 int _tmain(int argc, _TCHAR* argv[])
@@ -904,11 +1034,6 @@ int _tmain(int argc, _TCHAR* argv[])
 		*((UINT32*)(temp + start + 5)) = kvp.second;
 		start += 9;
 	}*/
-	while (true)
-	{
-		ReadData();
-	}
-	auto aa = sizeof(ServerTag);
 	WSADATA wsaData;
 	int nRet;
 	if ((nRet = WSAStartup(MAKEWORD(2, 2), &wsaData)) != 0)
