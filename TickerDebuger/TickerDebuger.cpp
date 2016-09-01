@@ -16,7 +16,7 @@
 using namespace std;
 enum OP_TYPE{ Read = 1, Write = 2 };
 #pragma pack (1)
-struct ServerTag
+struct IPTag
 {
 	//ip类型(v4 or v6)
 	byte IP_TYPE;
@@ -24,12 +24,21 @@ struct ServerTag
 	INT64 IP_VALUE;
 	//tcp端口号
 	UINT16 TCP_PORT;
+};
+struct ServerTag
+{
+	IPTag IP_INFO;
 	//client总数
 	int C_COUNT;
 	//协议类型
 	byte PRO_TYPE;
 	//serverName的长度
 	byte KEY_COUNT;
+};
+struct SerInfo
+{
+	byte tag;
+	IPTag IP_INFO;
 };
 #pragma pack ()
 struct DataPack
@@ -400,7 +409,32 @@ protected:
 	queue<RequestPack>* _dataQueue;
 	HANDLE _semaphore;
 };
-
+class NodeClient
+{
+protected:
+	static mutex opLock;
+	static mutex updateLock;
+	static map<string, map<byte, SerInfo>*> ServerMap;
+	static bool AddData(char* name, map<byte, SerInfo>* data);
+	static bool Remove(const char* name);
+	static void UpdateData();
+	static char* data;
+protected:
+	SOCKET _csock;
+	thread* _recvThread;
+	byte* _buffer;
+	string* _name;
+	static const int bufferCount;
+	virtual bool Login(int recvCount);
+	virtual int GetData(int recvCount, char** data, int* other);
+	virtual bool DoSth(char* data);
+	void RecvThread();
+public:
+	NodeClient(SOCKET client);
+	static byte* GetOnlineServer();
+	void Start();
+	~NodeClient();
+};
 void Client::StartRecv()
 {
 	this->StartRecv(this->_recvOperatorObject);
@@ -609,6 +643,15 @@ void ClientProcess::ProcessThread()
 				*((UINT16*)sendBuff) = 6;
 			}
 			data._client->SendData(sendBuff, sendCount);
+		}
+		if (memcmp(command, "getSerList", data._data[0] - 1) == 0)
+		{
+			byte* resu = NodeClient::GetOnlineServer();
+			if (resu == nullptr)
+				resu = new byte[6];
+			*((int*)resu) = 6;
+			*((uint16_t*)(resu + 4)) = 0;
+			data._client->SendData((char*)resu, *((int*)resu));
 		}
 		delete data._data;
 		data._client->EndProcess();
@@ -869,9 +912,9 @@ bool ReadData()
 	{
 		ServerTag tag;
 		string key(com.key);
-		tag.IP_TYPE = (com.type == IP_TYPE::IPV4 ? 0x04 : 0x06);
-		tag.TCP_PORT = com.port;
-		tag.IP_VALUE = com.IPValue.v4;
+		tag.IP_INFO.IP_TYPE = (com.type == IP_TYPE::IPV4 ? 0x04 : 0x06);
+		tag.IP_INFO.TCP_PORT = com.port;
+		tag.IP_INFO.IP_VALUE = com.IPValue.v4;
 		tag.C_COUNT = com.value;
 		tag.KEY_COUNT = key.size();
 		tag.PRO_TYPE = 0x00;
@@ -885,20 +928,77 @@ bool ReadData()
 	return resu;
 }
 
-class NodeClient
+mutex NodeClient::opLock;
+mutex NodeClient::updateLock;
+map<string, map<byte, SerInfo>*> NodeClient::ServerMap;
+
+char* NodeClient::data = nullptr;
+void NodeClient::UpdateData()
 {
-protected:
-	SOCKET _csock;
-	thread* _recvThread;
-	byte* _buffer;
-	static const int bufferCount;
-	virtual bool Login(int recvCount);
-public:
-	NodeClient(SOCKET client);
-	void Start();
-	void RecvThread();
-	~NodeClient();
-};
+	if (NodeClient::ServerMap.size() == 0)
+	{
+		delete NodeClient::data;
+		NodeClient::data = nullptr;
+		return;
+	}
+	//leng(4):count(2)
+	int resultSize = 6;
+	for (auto& tag : NodeClient::ServerMap)
+	{
+		//strlen(2):str(n):IPTag:(iptype(1):ip(8):port(2)):
+		resultSize += (tag.first.length() + 2 + sizeof(IPTag));
+	}
+	char* result = (char*)malloc(resultSize);
+	*(INT32*)result = resultSize;
+	*((uint16_t*)(result + 4)) = (uint16_t)NodeClient::ServerMap.size();
+	char* tempStart = result + 6;
+	for (auto& tag : NodeClient::ServerMap)
+	{
+		const string& key = tag.first;
+		*(uint16_t*)tempStart = key.length();
+		tempStart += 2;
+		memcpy(tempStart, key.c_str(), key.length());
+		tempStart += key.length();
+		SerInfo& info = tag.second->at(0x02);
+		*(IPTag*)tempStart = info.IP_INFO;
+		tempStart += sizeof(IPTag);
+	}
+	NodeClient::updateLock.lock();
+	delete NodeClient::data;
+	NodeClient::data = tempStart;
+	NodeClient::updateLock.unlock();
+}
+
+bool NodeClient::AddData(char* name, map<byte, SerInfo>* data)
+{
+	string key(name);
+	bool isSuccess = false;
+	NodeClient::opLock.lock();
+	if (NodeClient::ServerMap.find(key) == NodeClient::ServerMap.end())
+	{
+		NodeClient::ServerMap.insert(pair<string, map<byte, SerInfo>*>(key, data));
+		NodeClient::UpdateData();
+		isSuccess = true;
+	}
+	NodeClient::opLock.unlock();
+	return isSuccess;
+}
+
+bool NodeClient::Remove(const char* name)
+{
+	string key(name);
+	bool isSuccess = true;
+	NodeClient::opLock.lock();
+	auto& item = NodeClient::ServerMap.find(key);
+	if (item != NodeClient::ServerMap.end())
+	{
+		delete item->second;
+		NodeClient::ServerMap.erase(key);
+		NodeClient::UpdateData();
+	}
+	NodeClient::opLock.unlock();
+	return isSuccess;
+}
 
 bool NodeClient::Login(int recvCount)
 {
@@ -922,15 +1022,93 @@ bool NodeClient::Login(int recvCount)
 	char* name = (char*)malloc((*nameLeng) + 1);
 	name[*nameLeng] = 0x00;
 	memcpy(name, start, *nameLeng);
-
+	start += (*nameLeng);
+	byte nodeLength = *start;
+	start++;
+	map<byte, SerInfo>* infoMap = new map<byte, SerInfo>();
+	for (int i = 0; i < nodeLength; i++)
+	{
+		const SerInfo* iptag = (SerInfo*)start;
+		if (infoMap->find(iptag->tag) != infoMap->end())
+			throw 1;
+		infoMap->insert(pair<byte, SerInfo>(iptag->tag, *iptag));
+		start += sizeof(SerInfo);
+	}
+	bool result = false;
+	//必需要有的信息
+	if (infoMap->find(0x02) == infoMap->end())
+	{
+		delete infoMap;
+	}
+	else
+	{
+		_name = new string(name);
+		result = NodeClient::AddData(name, infoMap);
+	}
 	delete name;
-	return true;
+	return result;
+}
+
+int NodeClient::GetData(int recvCount, char** data, int* other)
+{
+	if (recvCount < 2)
+	{
+		*other = recvCount;
+		return 0;
+	}
+	const int16_t* dataLeng = (int16_t*)this->_buffer;
+	if (*dataLeng > 1024)
+		return -1;
+	if (*dataLeng < recvCount)
+	{
+		*other = (*dataLeng);
+		return 0;
+	}
+	char* result = (char*)malloc((*dataLeng) + 1);
+	result[(*dataLeng)] = 0x00;
+	memcpy(result, this->_buffer, *dataLeng);
+	*data = result;
+	int rather = (*dataLeng) - recvCount;
+	*other = rather;
+	if (rather > 0)
+		memcpy(this->_buffer, this->_buffer + (*dataLeng), rather);
+	return 1;
+}
+
+bool NodeClient::DoSth(char* data)
+{
+	const int16_t* length = (int16_t*)data;
+	char* str = data + 2;
+	Command com;
+	bool resu = ::ParseValue(str, &com);
+	if (resu && memcmp(com.key, this->_name->c_str(), com.keyCount) != 0)
+	{
+		throw 1;
+	}
+	if (resu && strcmp(com.commandValue, "add") == 0)
+	{
+		ServerTag tag;
+		string key(com.key);
+		tag.IP_INFO.IP_TYPE = (com.type == IP_TYPE::IPV4 ? 0x04 : 0x06);
+		tag.IP_INFO.TCP_PORT = com.port;
+		tag.IP_INFO.IP_VALUE = com.IPValue.v4;
+		tag.C_COUNT = com.value;
+		tag.KEY_COUNT = key.size();
+		tag.PRO_TYPE = 0x00;
+		DataList::GetInstance()->AddData(tag, key);
+	}
+	if (resu && strcmp(com.commandValue, "delete") == 0)
+	{
+
+	}
+	return resu;
 }
 
 NodeClient::~NodeClient()
 {
 	delete this->_buffer;
 	delete this->_recvThread;
+	delete this->_name;
 }
 
 const int NodeClient::bufferCount = 1024;
@@ -946,6 +1124,8 @@ void NodeClient::Start()
 }
 void NodeClient::RecvThread()
 {
+	while (this->_recvThread == nullptr);
+	this->_recvThread->detach();
 	//waitLog
 	int recvCount = ::recv(this->_csock, (char*)this->_buffer, NodeClient::bufferCount, 0);
 	
@@ -955,17 +1135,65 @@ void NodeClient::RecvThread()
 		delete this;
 		return;
 	}
-
+	if (SOCKET_ERROR == ::send(this->_csock, "ok", 2, 0))
+	{
+		::closesocket(this->_csock);
+		delete this;
+		return;
+	}
+	int rather = 0;
+	char* data;
+	int result = 0;
 	while (true)
 	{
-		int recvCount = ::recv(this->_csock, (char*)this->_buffer, NodeClient::bufferCount, 0);
+		int recvCount = ::recv(this->_csock, (char*)this->_buffer + rather, NodeClient::bufferCount - rather, 0);
 		//被远端close
 		if (recvCount <= 0)
 		{
-			delete this;
-			return;
+			break;
+		}
+		while ((result = this->GetData(recvCount, &data, &rather)) > 0)
+		{
+			recvCount = rather;
+			bool resu = false;
+			try
+			{
+				resu = this->DoSth(data);
+			}
+			catch (int expID)
+			{
+				delete data;
+				break;
+			}
+			char success = resu ? 0x01 : 0x02;
+			if (SOCKET_ERROR == ::send(this->_csock, &success, 1, 0))
+			{
+				break;
+			}
+			delete data;
+		}
+		if (result == -1)
+		{
+			break;
 		}
 	}
+	::closesocket(this->_csock);
+	NodeClient::Remove(this->_name->c_str());
+	DataList::GetInstance()->DeleteData(*this->_name);
+	delete this;
+}
+byte* NodeClient::GetOnlineServer()
+{
+	byte* result = nullptr;
+	NodeClient::updateLock.lock();
+	if (NodeClient::data != nullptr)
+	{
+		uint16_t datalength = *((uint16_t*)NodeClient::data);
+		result = (byte*)malloc(datalength);
+		memcpy(result, NodeClient::data, datalength);
+	}
+	NodeClient::updateLock.unlock();
+	return result;
 }
 
 class NodeServer
@@ -1007,7 +1235,8 @@ void NodeServer::AcceptThread()
 		if (this->_isStop)
 			return;
 		SOCKET remoteClient = ::accept(this->_listener, &remoteAddr, &addrLeng);
-
+		auto client = new NodeClient(remoteClient);
+		client->Start();
 	}
 }
 
@@ -1046,6 +1275,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	int returnCode = _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_WNDW);
 	Server* server = new Server("10.2.0.182", 1525);
 	server->Start();
+	NodeServer* nodeServer = new NodeServer(string("10.2.0.182"), 1255);
 	int rec = 0;
 	while (true) 
 	{
