@@ -242,8 +242,20 @@ int DataList::GetData(char** data)
 	this->_dataMutex->unlock();
 	*data = result;
 	return resultCount;*/
-	*data = DataList::dataBuffer;
-	return DataList::dataCount;
+	if (DataList::dataCount == 0)
+	{
+		return 0;
+	}
+	char* result = nullptr;
+	int count = 0;
+	this->_dataMutex->lock();
+	result = (char*)malloc(DataList::dataCount + 2);
+	memcpy(result + 2, DataList::dataBuffer, DataList::dataCount);
+	count = DataList::dataCount + 2;
+	*((uint16_t*)result) = count;
+	this->_dataMutex->unlock();
+	*data = result;
+	return count;
 }
 void DataList::DeleteData(string& key)
 {
@@ -629,11 +641,12 @@ void ClientProcess::ProcessThread()
 			int resultCount = DataList::GetInstance()->GetData(&result);
 			if (resultCount > 0)
 			{
-				sendCount = resultCount + 2;
+				/*sendCount = resultCount + 2;
 				sendBuff = new char[resultCount + 2];
 				memcpy(sendBuff + 2, result, resultCount);
-				*((UINT16*)sendBuff) = sendCount;
-				delete result;
+				*((UINT16*)sendBuff) = sendCount;*/
+				sendBuff = result;
+				sendCount = resultCount;
 			}
 			else
 			{
@@ -965,7 +978,7 @@ void NodeClient::UpdateData()
 	}
 	NodeClient::updateLock.lock();
 	delete NodeClient::data;
-	NodeClient::data = tempStart;
+	NodeClient::data = result;
 	NodeClient::updateLock.unlock();
 }
 
@@ -1275,7 +1288,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	int returnCode = _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_WNDW);
 	Server* server = new Server("10.2.0.182", 1525);
 	server->Start();
-	NodeServer* nodeServer = new NodeServer(string("10.2.0.182"), 1255);
+	NodeServer* nodeServer = new NodeServer(string("10.2.0.182"), 5656);
 	int rec = 0;
 	while (true) 
 	{
